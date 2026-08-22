@@ -1,0 +1,54 @@
+{% extends "base.html" %}
+{% block title %}Мои заказы{% endblock %}
+{% block content %}
+
+<div class="page-head">
+  <h1>Мои заказы</h1>
+</div>
+
+{% if orders %}
+<div class="card">
+  <table>
+    <thead>
+      <tr><th>№</th><th>Дата доставки</th><th>Статус</th><th>Сумма</th><th>Приёмка</th><th></th></tr>
+    </thead>
+    <tbody>
+      {% for order in orders %}
+      <tr>
+        <td class="mono">#{{ order.id }}</td>
+        <td>{{ order.delivery_date.strftime('%d.%m.%Y') }}</td>
+        <td><span class="status-pill status-{{ order.status }}">{{ order.status_label }}</span></td>
+        <td class="mono">{{ '%.0f'|format(order.total) }} ₸</td>
+        <td>
+          {% if order.confirmation_state == 'dispute' %}
+            <span class="status-pill status-cancelled">Расхождение</span>
+          {% elif order.confirmation_state == 'confirmed' %}
+            <span class="status-pill status-delivered">Подтверждён ✓</span>
+          {% elif order.confirmation_state == 'awaiting_confirmation' %}
+            <form method="post" action="{{ url_for('order_confirm', order_id=order.id) }}" style="display:inline;">
+              <button class="btn small" type="submit">Сходится</button>
+            </form>
+            <button class="btn small secondary" type="button" onclick="document.getElementById('dispute-{{ order.id }}').style.display='flex'">Не сходится</button>
+            <form method="post" action="{{ url_for('order_dispute', order_id=order.id) }}" id="dispute-{{ order.id }}" style="display:none; gap:6px; margin-top:6px;">
+              <input type="text" name="dispute_note" placeholder="Что не сходится?" style="padding:6px; border:1px solid var(--line); border-radius:6px; font-size:12px;">
+              <button class="btn small" type="submit" style="background:var(--danger);">Отправить</button>
+            </form>
+          {% else %}
+            <span style="color:var(--ink-soft); font-size:12px;">—</span>
+          {% endif %}
+        </td>
+        <td><a href="{{ url_for('order_repeat', order_id=order.id) }}" class="btn small secondary">Повторить</a></td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% else %}
+<div class="empty-state">
+  <h2>Заказов пока нет</h2>
+  <p>Оформите первый заказ в каталоге.</p>
+  <a href="{{ url_for('catalog') }}" class="btn">Перейти в каталог</a>
+</div>
+{% endif %}
+
+{% endblock %}

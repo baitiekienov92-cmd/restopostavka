@@ -1,0 +1,37 @@
+{% extends "base.html" %}
+{% block title %}Сводка закупа{% endblock %}
+{% block content %}
+
+<div class="page-head">
+  <h1>Сводный лист закупа</h1>
+  <div class="sub">На {{ date_filter }} · из {{ orders|length }} заказов ресторанов</div>
+</div>
+
+<form method="get" class="filter-bar">
+  <input type="date" name="date" value="{{ date_filter }}" onchange="this.form.submit()">
+</form>
+
+{% if summary %}
+<div class="card">
+  <table>
+    <thead>
+      <tr><th>Товар</th><th>Нужно закупить</th></tr>
+    </thead>
+    <tbody>
+      {% for row in summary %}
+      <tr>
+        <td>{{ row.product.name }}</td>
+        <td class="mono" style="font-size:16px;">{{ row.qty|round(1) }} {{ row.product.unit }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+<p style="margin-top:14px;"><a href="#" onclick="window.print(); return false;" class="btn secondary">Печать / сохранить PDF</a></p>
+{% else %}
+<div class="empty-state">
+  <h2>Нет заказов на эту дату</h2>
+</div>
+{% endif %}
+
+{% endblock %}

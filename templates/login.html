@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Вход — КрафтСнаб</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+</head>
+<body>
+  <div class="login-wrap">
+    <div class="login-card">
+      <h1>Крафт<span style="color:var(--crate)">Снаб</span></h1>
+      <div class="tag">Закуп овощей и продуктов для ресторанов</div>
+
+      {% with messages = get_flashed_messages(with_categories=true) %}
+        {% if messages %}
+          {% for category, message in messages %}
+            <div class="flash {{ category }}">{{ message }}</div>
+          {% endfor %}
+        {% endif %}
+      {% endwith %}
+
+      <form method="post">
+        <div class="field">
+          <label>Телефон</label>
+          <input type="text" name="phone" placeholder="+7 700 000 00 00" required autofocus>
+        </div>
+        <div class="field">
+          <label>Пароль</label>
+          <input type="password" name="password" required>
+        </div>
+        <button class="btn" type="submit" style="width:100%">Войти</button>
+      </form>
+    </div>
+  </div>
+</body>
+</html>

@@ -1,0 +1,43 @@
+{% extends "base.html" %}
+{% block title %}Поставщики{% endblock %}
+{% block content %}
+
+<div class="page-head">
+  <h1>Поставщики</h1>
+</div>
+
+<div class="card" style="margin-bottom:20px;">
+  <h3 style="margin-top:0;">Добавить поставщика</h3>
+  <form method="post" action="{{ url_for('admin_supplier_add') }}" style="display:flex; gap:10px; flex-wrap:wrap; align-items:end;">
+    <div class="field" style="margin:0;">
+      <label>Имя / название</label>
+      <input type="text" name="name" required>
+    </div>
+    <div class="field" style="margin:0;">
+      <label>WhatsApp (77001234567)</label>
+      <input type="text" name="whatsapp_phone" placeholder="77001234567" required>
+    </div>
+    <div class="field" style="margin:0;">
+      <label>Заметка</label>
+      <input type="text" name="notes" placeholder="Например: базар Барахолка, зелень">
+    </div>
+    <button class="btn" type="submit">Добавить</button>
+  </form>
+</div>
+
+<div class="card">
+  <table>
+    <thead><tr><th>Название</th><th>WhatsApp</th><th>Заметка</th></tr></thead>
+    <tbody>
+      {% for s in suppliers %}
+      <tr>
+        <td>{{ s.name }}</td>
+        <td class="mono">+{{ s.whatsapp_phone }}</td>
+        <td style="color:var(--ink-soft); font-size:13px;">{{ s.notes or '—' }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+{% endblock %}

@@ -1,0 +1,68 @@
+{% extends "base.html" %}
+{% block title %}Заявка поставщику{% endblock %}
+{% block content %}
+
+<div class="page-head">
+  <h1>{{ run.supplier.name }}</h1>
+  <div class="sub">Закуп на {{ run.purchase_date.strftime('%d.%m.%Y') }} · <span class="status-pill status-{{ 'new' if run.status=='draft' else ('on_the_way' if run.status=='sent' else 'delivered') }}">{{ run.status_label }}</span></div>
+</div>
+
+<div class="card" style="margin-bottom:18px;">
+  <h3 style="margin-top:0;">Текст заявки для WhatsApp</h3>
+  <pre style="white-space:pre-wrap; font-family:'JetBrains Mono',monospace; font-size:13px; background:var(--panel); padding:12px; border-radius:8px;">{{ message_text }}</pre>
+
+  {% if run.status == 'draft' %}
+  <form method="post" action="{{ url_for('admin_run_send', run_id=run.id) }}" style="margin-top:12px;">
+    <button class="btn" type="submit">Отправить в WhatsApp →</button>
+  </form>
+  {% else %}
+  <a href="{{ wa_link }}" target="_blank" class="btn secondary" style="margin-top:12px; display:inline-block;">Открыть чат в WhatsApp</a>
+  {% endif %}
+</div>
+
+<div class="card" style="margin-bottom:18px;">
+  <h3 style="margin-top:0;">Позиции заявки {% if run.status == 'received' %}(фактические цены){% endif %}</h3>
+  <form method="post" action="{{ url_for('admin_run_receive', run_id=run.id) }}">
+    <table>
+      <thead><tr><th>Товар</th><th>Кол-во</th><th>Факт. цена, ₸</th><th>Сумма</th></tr></thead>
+      <tbody>
+        {% for item in run.items %}
+        <tr>
+          <td>{{ item.product.name }}</td>
+          <td class="mono">{{ item.qty|round(1) }} {{ item.product.unit }}</td>
+          <td>
+            <input type="hidden" name="item_id" value="{{ item.id }}">
+            <input type="number" step="0.01" name="actual_price" value="{{ item.actual_price or '' }}" style="width:100px; padding:6px; border:1px solid var(--line); border-radius:6px;" class="mono" {{ 'disabled' if run.status == 'draft' }}>
+          </td>
+          <td class="mono">{{ '%.0f'|format(item.qty * item.actual_price) if item.actual_price else '—' }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% if run.status == 'sent' %}
+    <button class="btn" type="submit" style="margin-top:12px;">Отметить как получено</button>
+    {% elif run.status == 'received' %}
+    <div style="margin-top:12px; font-weight:700;">Фактическая сумма закупа: <span class="mono">{{ '%.0f'|format(run.actual_total) }} ₸</span></div>
+    <button class="btn secondary small" type="submit" style="margin-top:8px;">Обновить цены</button>
+    {% endif %}
+  </form>
+</div>
+
+<div class="card">
+  <h3 style="margin-top:0;">Фото накладной</h3>
+  {% if run.photos %}
+  <div style="display:flex; gap:10px; flex-wrap:wrap; margin-bottom:14px;">
+    {% for photo in run.photos %}
+    <a href="{{ url_for('static', filename=photo.filepath) }}" target="_blank">
+      <img src="{{ url_for('static', filename=photo.filepath) }}" style="width:120px; height:120px; object-fit:cover; border-radius:8px; border:1px solid var(--line);">
+    </a>
+    {% endfor %}
+  </div>
+  {% endif %}
+  <form method="post" action="{{ url_for('admin_run_upload_photo', run_id=run.id) }}" enctype="multipart/form-data" style="display:flex; gap:10px; align-items:center;">
+    <input type="file" name="photo" accept="image/*" capture="environment" required>
+    <button class="btn secondary small" type="submit">Загрузить</button>
+  </form>
+</div>
+
+{% endblock %}
