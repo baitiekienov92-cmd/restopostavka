@@ -1,14 +1,32 @@
 import os
+import base64
 from datetime import date, datetime, timedelta
 from functools import wraps
 from urllib.parse import quote
 
-from flask import Flask, render_template, request, redirect, url_for, session, flash, jsonify
+from flask import Flask, render_template, request, redirect, url_for, session, flash, jsonify, Response
 from werkzeug.utils import secure_filename
 from models import (
     db, User, Restaurant, Product, Category, RestaurantPrice, Order, OrderItem, ORDER_STATUSES,
     Supplier, SupplierRun, SupplierRunItem, SupplierInvoicePhoto, RUN_STATUSES,
+    OrderDisputePhoto, RestaurantPayment, SupplierPayment,
+    AdminNotification, PaymentNotice,
 )
+
+try:
+    from webauthn import (
+        generate_registration_options, verify_registration_response,
+        generate_authentication_options, verify_authentication_response,
+        options_to_json,
+    )
+    from webauthn.helpers.structs import (
+        AuthenticatorSelectionCriteria, UserVerificationRequirement,
+        PublicKeyCredentialDescriptor, RegistrationCredential, AuthenticationCredential,
+    )
+    from webauthn.helpers import bytes_to_base64url, base64url_to_bytes
+    WEBAUTHN_AVAILABLE = True
+except ImportError:
+    WEBAUTHN_AVAILABLE = False
 
 BASE_DIR = os.path.abspath(os.path.dirname(__file__))
 
@@ -20,6 +38,8 @@ app.config["SQLALCHEMY_DATABASE_URI"] = os.environ.get(
 app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
 app.config["UPLOAD_FOLDER"] = os.path.join(BASE_DIR, "static", "uploads", "invoices")
 os.makedirs(app.config["UPLOAD_FOLDER"], exist_ok=True)
+app.config["DISPUTE_UPLOAD_FOLDER"] = os.path.join(BASE_DIR, "static", "uploads", "disputes")
+os.makedirs(app.config["DISPUTE_UPLOAD_FOLDER"], exist_ok=True)
 
 db.init_app(app)
 
@@ -63,9 +83,27 @@ def next_delivery_date():
     return d
 
 
+def rp_id():
+    return request.host.split(":")[0]
+
+
+def rp_origin():
+    return request.url_root.rstrip("/")
+
+
+def notify_admin(kind, message):
+    db.session.add(AdminNotification(kind=kind, message=message))
+    db.session.commit()
+
+
 @app.context_processor
 def inject_globals():
-    return {"current_user": current_user(), "now": datetime.now()}
+    unread_count = 0
+    user = current_user()
+    if user and user.is_admin:
+        unread_count = AdminNotification.query.filter_by(is_read=False).count()
+        unread_count += PaymentNotice.query.filter_by(status="pending").count()
+    return {"current_user": user, "now": datetime.now(), "unread_notifications": unread_count, "webauthn_available": WEBAUTHN_AVAILABLE}
 
 
 # ---------- Авторизация ----------
@@ -90,6 +128,102 @@ def login():
 def logout():
     session.clear()
     return redirect(url_for("login"))
+
+
+# ---------- Face ID / Touch ID (WebAuthn) ----------
+
+@app.route("/webauthn/register/begin", methods=["POST"])
+@login_required
+def webauthn_register_begin():
+    if not WEBAUTHN_AVAILABLE:
+        return jsonify({"error": "unavailable"}), 400
+    user = current_user()
+    options = generate_registration_options(
+        rp_id=rp_id(),
+        rp_name="restopostavka",
+        user_id=str(user.id).encode(),
+        user_name=user.phone,
+        user_display_name=user.name,
+        authenticator_selection=AuthenticatorSelectionCriteria(
+            user_verification=UserVerificationRequirement.REQUIRED,
+        ),
+    )
+    session["webauthn_challenge"] = bytes_to_base64url(options.challenge)
+    return Response(options_to_json(options), mimetype="application/json")
+
+
+@app.route("/webauthn/register/complete", methods=["POST"])
+@login_required
+def webauthn_register_complete():
+    if not WEBAUTHN_AVAILABLE:
+        return jsonify({"error": "unavailable"}), 400
+    user = current_user()
+    challenge = base64url_to_bytes(session.pop("webauthn_challenge", ""))
+    try:
+        credential = RegistrationCredential.parse_raw(request.data)
+        verification = verify_registration_response(
+            credential=credential,
+            expected_challenge=challenge,
+            expected_origin=rp_origin(),
+            expected_rp_id=rp_id(),
+        )
+    except Exception as e:
+        return jsonify({"error": str(e)}), 400
+
+    user.webauthn_credential_id = bytes_to_base64url(verification.credential_id)
+    user.webauthn_public_key = bytes_to_base64url(verification.credential_public_key)
+    user.webauthn_sign_count = verification.sign_count
+    db.session.commit()
+    return jsonify({"ok": True})
+
+
+@app.route("/webauthn/login/begin", methods=["POST"])
+def webauthn_login_begin():
+    if not WEBAUTHN_AVAILABLE:
+        return jsonify({"error": "unavailable"}), 400
+    phone = request.form.get("phone", "").strip()
+    user = User.query.filter_by(phone=phone).first()
+    if not user or not user.has_faceid:
+        return jsonify({"error": "no_credential"}), 400
+
+    options = generate_authentication_options(
+        rp_id=rp_id(),
+        allow_credentials=[PublicKeyCredentialDescriptor(id=base64url_to_bytes(user.webauthn_credential_id))],
+        user_verification=UserVerificationRequirement.REQUIRED,
+    )
+    session["webauthn_challenge"] = bytes_to_base64url(options.challenge)
+    session["webauthn_login_user_id"] = user.id
+    return Response(options_to_json(options), mimetype="application/json")
+
+
+@app.route("/webauthn/login/complete", methods=["POST"])
+def webauthn_login_complete():
+    if not WEBAUTHN_AVAILABLE:
+        return jsonify({"error": "unavailable"}), 400
+    user_id = session.pop("webauthn_login_user_id", None)
+    challenge = base64url_to_bytes(session.pop("webauthn_challenge", ""))
+    user = User.query.get(user_id) if user_id else None
+    if not user:
+        return jsonify({"error": "session_expired"}), 400
+
+    try:
+        credential = AuthenticationCredential.parse_raw(request.data)
+        verification = verify_authentication_response(
+            credential=credential,
+            expected_challenge=challenge,
+            expected_origin=rp_origin(),
+            expected_rp_id=rp_id(),
+            credential_public_key=base64url_to_bytes(user.webauthn_public_key),
+            credential_current_sign_count=user.webauthn_sign_count,
+        )
+    except Exception as e:
+        return jsonify({"error": str(e)}), 400
+
+    user.webauthn_sign_count = verification.new_sign_count
+    db.session.commit()
+    session["user_id"] = user.id
+    redirect_url = url_for("admin_orders") if user.is_admin else url_for("catalog")
+    return jsonify({"ok": True, "redirect": redirect_url})
 
 
 # ---------- Ресторан: каталог и заказ ----------
@@ -225,6 +359,10 @@ def order_confirm(order_id):
         order.restaurant_confirmed_at = datetime.utcnow()
         order.dispute_flag = False
         db.session.commit()
+        notify_admin(
+            "confirmation",
+            f"✅ Ресторан «{order.restaurant.name}» подтвердил приёмку заказа №{order.id} на {order.total:.0f} ₸"
+        )
         flash(f"Заказ №{order.id} подтверждён", "success")
     return redirect(url_for("order_history"))
 
@@ -238,7 +376,37 @@ def order_dispute(order_id):
     order.dispute_note = request.form.get("dispute_note", "")
     order.restaurant_confirmed_at = None
     db.session.commit()
+
+    photo = request.files.get("dispute_photo")
+    if photo and photo.filename:
+        filename = secure_filename(f"order{order_id}_{datetime.utcnow().timestamp()}_{photo.filename}")
+        filepath = os.path.join(app.config["DISPUTE_UPLOAD_FOLDER"], filename)
+        photo.save(filepath)
+        db.session.add(OrderDisputePhoto(order_id=order.id, filepath=f"uploads/disputes/{filename}"))
+        db.session.commit()
+
+    notify_admin(
+        "dispute",
+        f"⚠️ СПОР по заказу №{order.id} от «{order.restaurant.name}»: {order.dispute_note or 'без комментария'}"
+    )
     flash(f"По заказу №{order.id} отправлено уведомление о расхождении", "success")
+    return redirect(url_for("order_history"))
+
+
+@app.route("/orders/payment_notice", methods=["POST"])
+@login_required
+def order_payment_notice():
+    user = current_user()
+    amount = float(request.form.get("amount", 0) or 0)
+    note = request.form.get("note", "")
+    if amount > 0:
+        db.session.add(PaymentNotice(restaurant_id=user.restaurant_id, amount=amount, note=note))
+        db.session.commit()
+        notify_admin(
+            "payment_notice",
+            f"💰 Ресторан «{user.restaurant.name}» сообщает об оплате {amount:.0f} ₸" + (f" ({note})" if note else "")
+        )
+        flash("Спасибо! Сообщили админу об оплате.", "success")
     return redirect(url_for("order_history"))
 
 
@@ -498,7 +666,7 @@ def admin_run_detail(run_id):
 
 
 def build_whatsapp_message(run):
-    lines = [f"Заявка на {run.purchase_date.strftime('%d.%m.%Y')}", "КрафтСнаб", ""]
+    lines = [f"Заявка на {run.purchase_date.strftime('%d.%m.%Y')}", "restopostavka", ""]
     for item in run.items:
         lines.append(f"- {item.product.name}: {item.qty:g} {item.product.unit}")
     lines.append("")
@@ -551,6 +719,150 @@ def admin_run_upload_photo(run_id):
         db.session.commit()
         flash("Фото накладной загружено", "success")
     return redirect(url_for("admin_run_detail", run_id=run.id))
+
+
+# ---------- Финансы: дебет/кредит ----------
+
+@app.route("/admin/finance/restaurants")
+@admin_required
+def admin_finance_restaurants():
+    restaurants = Restaurant.query.order_by(Restaurant.name).all()
+    return render_template("admin_finance_restaurants.html", restaurants=restaurants)
+
+
+@app.route("/admin/finance/restaurants/<int:restaurant_id>")
+@admin_required
+def admin_finance_restaurant_detail(restaurant_id):
+    restaurant = Restaurant.query.get_or_404(restaurant_id)
+    orders = Order.query.filter_by(restaurant_id=restaurant.id).order_by(Order.created_at.desc()).all()
+    payments = RestaurantPayment.query.filter_by(restaurant_id=restaurant.id).order_by(RestaurantPayment.created_at.desc()).all()
+    return render_template("admin_finance_restaurant_detail.html", restaurant=restaurant, orders=orders, payments=payments)
+
+
+@app.route("/admin/finance/restaurants/<int:restaurant_id>/add_payment", methods=["POST"])
+@admin_required
+def admin_finance_restaurant_add_payment(restaurant_id):
+    amount = float(request.form.get("amount", 0) or 0)
+    note = request.form.get("note", "")
+    if amount > 0:
+        db.session.add(RestaurantPayment(restaurant_id=restaurant_id, amount=amount, note=note))
+        db.session.commit()
+        flash(f"Оплата {amount:.0f} ₸ зафиксирована", "success")
+    return redirect(url_for("admin_finance_restaurant_detail", restaurant_id=restaurant_id))
+
+
+@app.route("/admin/finance/suppliers")
+@admin_required
+def admin_finance_suppliers():
+    suppliers = Supplier.query.order_by(Supplier.name).all()
+    return render_template("admin_finance_suppliers.html", suppliers=suppliers)
+
+
+@app.route("/admin/finance/suppliers/<int:supplier_id>")
+@admin_required
+def admin_finance_supplier_detail(supplier_id):
+    supplier = Supplier.query.get_or_404(supplier_id)
+    runs = SupplierRun.query.filter_by(supplier_id=supplier.id).order_by(SupplierRun.purchase_date.desc()).all()
+    payments = SupplierPayment.query.filter_by(supplier_id=supplier.id).order_by(SupplierPayment.created_at.desc()).all()
+    return render_template("admin_finance_supplier_detail.html", supplier=supplier, runs=runs, payments=payments)
+
+
+@app.route("/admin/finance/suppliers/<int:supplier_id>/add_payment", methods=["POST"])
+@admin_required
+def admin_finance_supplier_add_payment(supplier_id):
+    amount = float(request.form.get("amount", 0) or 0)
+    note = request.form.get("note", "")
+    if amount > 0:
+        db.session.add(SupplierPayment(supplier_id=supplier_id, amount=amount, note=note))
+        db.session.commit()
+        flash(f"Оплата поставщику {amount:.0f} ₸ зафиксирована", "success")
+    return redirect(url_for("admin_finance_supplier_detail", supplier_id=supplier_id))
+
+
+# ---------- Метрики цен ----------
+
+@app.route("/admin/metrics")
+@admin_required
+def admin_metrics():
+    products = Product.query.order_by(Product.name).all()
+    product_id = request.args.get("product_id", type=int)
+    selected_product = None
+    restaurant_price_history = []
+    supplier_price_history = []
+
+    if product_id:
+        selected_product = Product.query.get_or_404(product_id)
+        items = (
+            OrderItem.query.filter_by(product_id=product_id)
+            .join(Order)
+            .order_by(Order.delivery_date.desc())
+            .limit(60)
+            .all()
+        )
+        restaurant_price_history = [
+            {"date": item.order.delivery_date, "price": item.price, "restaurant": item.order.restaurant.name, "qty": item.qty}
+            for item in items
+        ]
+
+        run_items = (
+            SupplierRunItem.query.filter_by(product_id=product_id)
+            .join(SupplierRun)
+            .filter(SupplierRunItem.actual_price.isnot(None))
+            .order_by(SupplierRun.purchase_date.desc())
+            .limit(60)
+            .all()
+        )
+        supplier_price_history = [
+            {"date": ri.run.purchase_date, "price": ri.actual_price, "supplier": ri.run.supplier.name, "qty": ri.qty}
+            for ri in run_items
+        ]
+
+    return render_template(
+        "admin_metrics.html",
+        products=products,
+        selected_product=selected_product,
+        restaurant_price_history=restaurant_price_history,
+        supplier_price_history=supplier_price_history,
+    )
+
+
+# ---------- Уведомления ----------
+
+@app.route("/admin/notifications")
+@admin_required
+def admin_notifications():
+    notifications = AdminNotification.query.order_by(AdminNotification.created_at.desc()).limit(100).all()
+    payment_notices = PaymentNotice.query.filter_by(status="pending").order_by(PaymentNotice.created_at.desc()).all()
+
+    unread_ids = [n.id for n in notifications if not n.is_read]
+    if unread_ids:
+        AdminNotification.query.filter(AdminNotification.id.in_(unread_ids)).update(
+            {"is_read": True}, synchronize_session=False
+        )
+        db.session.commit()
+
+    return render_template("admin_notifications.html", notifications=notifications, payment_notices=payment_notices)
+
+
+@app.route("/admin/payment_notices/<int:notice_id>/accept", methods=["POST"])
+@admin_required
+def admin_payment_notice_accept(notice_id):
+    notice = PaymentNotice.query.get_or_404(notice_id)
+    db.session.add(RestaurantPayment(restaurant_id=notice.restaurant_id, amount=notice.amount, note=f"Подтверждено из заявки: {notice.note or ''}"))
+    notice.status = "accepted"
+    db.session.commit()
+    flash(f"Оплата {notice.amount:.0f} ₸ подтверждена и зачислена", "success")
+    return redirect(url_for("admin_notifications"))
+
+
+@app.route("/admin/payment_notices/<int:notice_id>/reject", methods=["POST"])
+@admin_required
+def admin_payment_notice_reject(notice_id):
+    notice = PaymentNotice.query.get_or_404(notice_id)
+    notice.status = "rejected"
+    db.session.commit()
+    flash("Заявка на оплату отклонена", "success")
+    return redirect(url_for("admin_notifications"))
 
 
 if __name__ == "__main__":

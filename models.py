@@ -18,12 +18,26 @@ class Restaurant(db.Model):
     users = db.relationship("User", backref="restaurant", lazy=True)
     orders = db.relationship("Order", backref="restaurant", lazy=True)
     price_overrides = db.relationship("RestaurantPrice", backref="restaurant", lazy=True)
+    payments = db.relationship("RestaurantPayment", backref="restaurant", lazy=True)
 
     def price_for(self, product):
         override = RestaurantPrice.query.filter_by(
             restaurant_id=self.id, product_id=product.id
         ).first()
         return override.price if override else product.base_price
+
+    @property
+    def total_debit(self):
+        return sum(o.total for o in self.orders if o.status != "cancelled")
+
+    @property
+    def total_credit(self):
+        return sum(p.amount for p in self.payments)
+
+    @property
+    def balance(self):
+        """Положительный баланс = ресторан должен нам."""
+        return self.total_debit - self.total_credit
 
 
 class User(db.Model):
@@ -37,6 +51,11 @@ class User(db.Model):
     restaurant_id = db.Column(db.Integer, db.ForeignKey("restaurants.id"), nullable=True)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
 
+    # Face ID / Touch ID (WebAuthn passkey)
+    webauthn_credential_id = db.Column(db.String(500), nullable=True)
+    webauthn_public_key = db.Column(db.String(500), nullable=True)
+    webauthn_sign_count = db.Column(db.Integer, default=0)
+
     def set_password(self, password):
         self.password_hash = generate_password_hash(password)
 
@@ -46,6 +65,10 @@ class User(db.Model):
     @property
     def is_admin(self):
         return self.role in ("admin", "warehouse")
+
+    @property
+    def has_faceid(self):
+        return bool(self.webauthn_credential_id)
 
 
 class Category(db.Model):
@@ -120,6 +143,7 @@ class Order(db.Model):
     dispute_note = db.Column(db.Text)
 
     items = db.relationship("OrderItem", backref="order", lazy=True, cascade="all, delete-orphan")
+    dispute_photos = db.relationship("OrderDisputePhoto", backref="order", lazy=True, cascade="all, delete-orphan")
 
     @property
     def total(self):
@@ -168,6 +192,20 @@ class Supplier(db.Model):
     is_active = db.Column(db.Boolean, default=True)
 
     runs = db.relationship("SupplierRun", backref="supplier", lazy=True)
+    payments = db.relationship("SupplierPayment", backref="supplier", lazy=True)
+
+    @property
+    def total_debit(self):
+        return sum(r.actual_total for r in self.runs if r.status == "received")
+
+    @property
+    def total_credit(self):
+        return sum(p.amount for p in self.payments)
+
+    @property
+    def balance(self):
+        """Положительный баланс = мы должны поставщику."""
+        return self.total_debit - self.total_credit
 
 
 RUN_STATUSES = ["draft", "sent", "received"]
@@ -225,4 +263,69 @@ class SupplierInvoicePhoto(db.Model):
     run_id = db.Column(db.Integer, db.ForeignKey("supplier_runs.id"), nullable=False)
     filepath = db.Column(db.String(300), nullable=False)
     uploaded_at = db.Column(db.DateTime, default=datetime.utcnow)
+
+
+class OrderDisputePhoto(db.Model):
+    __tablename__ = "order_dispute_photos"
+
+    id = db.Column(db.Integer, primary_key=True)
+    order_id = db.Column(db.Integer, db.ForeignKey("orders.id"), nullable=False)
+    filepath = db.Column(db.String(300), nullable=False)
+    uploaded_at = db.Column(db.DateTime, default=datetime.utcnow)
+
+
+# ---------- Финансы: дебет/кредит ----------
+
+class RestaurantPayment(db.Model):
+    """Оплата, поступившая от ресторана (кредит, уменьшает долг ресторана)."""
+    __tablename__ = "restaurant_payments"
+
+    id = db.Column(db.Integer, primary_key=True)
+    restaurant_id = db.Column(db.Integer, db.ForeignKey("restaurants.id"), nullable=False)
+    amount = db.Column(db.Float, nullable=False)
+    note = db.Column(db.String(300))
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+
+
+class SupplierPayment(db.Model):
+    """Оплата, отправленная поставщику (кредит, уменьшает наш долг поставщику)."""
+    __tablename__ = "supplier_payments"
+
+    id = db.Column(db.Integer, primary_key=True)
+    supplier_id = db.Column(db.Integer, db.ForeignKey("suppliers.id"), nullable=False)
+    amount = db.Column(db.Float, nullable=False)
+    note = db.Column(db.String(300))
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+
+
+# ---------- Уведомления для админа ----------
+
+class AdminNotification(db.Model):
+    """Внутриигровое уведомление: спор, подтверждение приёмки, заявка на оплату и т.д."""
+    __tablename__ = "admin_notifications"
+
+    id = db.Column(db.Integer, primary_key=True)
+    kind = db.Column(db.String(30), nullable=False)  # confirmation | dispute | payment_notice
+    message = db.Column(db.Text, nullable=False)
+    is_read = db.Column(db.Boolean, default=False)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+
+
+PAYMENT_NOTICE_STATUSES = ["pending", "accepted", "rejected"]
+
+
+class PaymentNotice(db.Model):
+    """Ресторан сообщает, что оплатил (полностью/частично) — админ подтверждает вручную."""
+    __tablename__ = "payment_notices"
+
+    id = db.Column(db.Integer, primary_key=True)
+    restaurant_id = db.Column(db.Integer, db.ForeignKey("restaurants.id"), nullable=False)
+    amount = db.Column(db.Float, nullable=False)
+    note = db.Column(db.String(300))
+    status = db.Column(db.String(20), default="pending")
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+
+    restaurant = db.relationship("Restaurant")
+
+
 

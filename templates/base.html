@@ -2,14 +2,21 @@
 <html lang="ru">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>{% block title %}Овощебаза{% endblock %}</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>{% block title %}restopostavka{% endblock %}</title>
   <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+  <link rel="manifest" href="{{ url_for('static', filename='manifest.json') }}">
+  <meta name="theme-color" content="#075E54">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="restopostavka">
+  <link rel="apple-touch-icon" href="{{ url_for('static', filename='icons/icon-192.png') }}">
 </head>
-<body>
+<body class="{{ 'role-restaurant' if current_user and not current_user.is_admin else 'role-admin' }}">
   {% if current_user %}
   <div class="topbar">
-    <h1 class="brand">Крафт<span>Снаб</span></h1>
+    <h1 class="brand">restopostavka</h1>
     <nav>
       {% if current_user.is_admin %}
         <a href="{{ url_for('admin_orders') }}" class="{{ 'active' if request.endpoint == 'admin_orders' }}">Заказы</a>
@@ -18,9 +25,12 @@
         <a href="{{ url_for('admin_products') }}" class="{{ 'active' if request.endpoint == 'admin_products' }}">Товары</a>
         <a href="{{ url_for('admin_restaurants') }}" class="{{ 'active' if request.endpoint == 'admin_restaurants' }}">Рестораны</a>
         <a href="{{ url_for('admin_suppliers') }}" class="{{ 'active' if request.endpoint == 'admin_suppliers' }}">Поставщики</a>
+        <a href="{{ url_for('admin_finance_restaurants') }}" class="{{ 'active' if request.endpoint in ['admin_finance_restaurants','admin_finance_restaurant_detail','admin_finance_suppliers','admin_finance_supplier_detail'] }}">Финансы</a>
+        <a href="{{ url_for('admin_metrics') }}" class="{{ 'active' if request.endpoint == 'admin_metrics' }}">Метрики</a>
+        <a href="{{ url_for('admin_notifications') }}" class="{{ 'active' if request.endpoint == 'admin_notifications' }}">Уведомления{% if unread_notifications %}<span class="nav-badge">{{ unread_notifications }}</span>{% endif %}</a>
       {% else %}
-        <a href="{{ url_for('catalog') }}" class="{{ 'active' if request.endpoint == 'catalog' }}">Каталог</a>
-        <a href="{{ url_for('order_history') }}" class="{{ 'active' if request.endpoint == 'order_history' }}">Мои заказы</a>
+        <a href="{{ url_for('catalog') }}" class="{{ 'active' if request.endpoint == 'catalog' }} desktop-only-link">Каталог</a>
+        <a href="{{ url_for('order_history') }}" class="{{ 'active' if request.endpoint == 'order_history' }} desktop-only-link">Мои заказы</a>
       {% endif %}
       <span class="user-tag">{{ current_user.name }}{% if current_user.restaurant %} · {{ current_user.restaurant.name }}{% endif %}</span>
       <a href="{{ url_for('logout') }}">Выход</a>
@@ -36,7 +46,92 @@
         {% endfor %}
       {% endif %}
     {% endwith %}
+
+    {% if current_user and webauthn_available and not current_user.has_faceid %}
+    <div class="card" id="faceid-banner" style="margin-bottom:16px; display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap;">
+      <div>
+        <strong>Подключить вход по Face ID?</strong>
+        <div style="font-size:13px; color:var(--ink-soft);">Быстрый вход без пароля на этом телефоне</div>
+      </div>
+      <button type="button" class="btn small" id="faceid-register-btn">Подключить</button>
+    </div>
+    <script>
+    document.getElementById('faceid-register-btn')?.addEventListener('click', async () => {
+      function bufferDecode(value) {
+        value = value.replace(/-/g, '+').replace(/_/g, '/');
+        const pad = value.length % 4;
+        if (pad) value += '='.repeat(4 - pad);
+        const raw = atob(value);
+        const buf = new Uint8Array(raw.length);
+        for (let i = 0; i < raw.length; i++) buf[i] = raw.charCodeAt(i);
+        return buf.buffer;
+      }
+      function bufferEncode(buf) {
+        const bytes = new Uint8Array(buf);
+        let str = '';
+        for (let i = 0; i < bytes.length; i++) str += String.fromCharCode(bytes[i]);
+        return btoa(str).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+      }
+      try {
+        const beginResp = await fetch("{{ url_for('webauthn_register_begin') }}", {method: "POST"});
+        const opts = await beginResp.json();
+        opts.challenge = bufferDecode(opts.challenge);
+        opts.user.id = bufferDecode(opts.user.id);
+        if (opts.excludeCredentials) {
+          opts.excludeCredentials = opts.excludeCredentials.map(c => ({...c, id: bufferDecode(c.id)}));
+        }
+        const cred = await navigator.credentials.create({ publicKey: opts });
+        const payload = {
+          id: cred.id,
+          rawId: bufferEncode(cred.rawId),
+          type: cred.type,
+          response: {
+            attestationObject: bufferEncode(cred.response.attestationObject),
+            clientDataJSON: bufferEncode(cred.response.clientDataJSON)
+          }
+        };
+        const completeResp = await fetch("{{ url_for('webauthn_register_complete') }}", {
+          method: "POST",
+          headers: {"Content-Type": "application/json"},
+          body: JSON.stringify(payload)
+        });
+        const result = await completeResp.json();
+        if (result.ok) {
+          document.getElementById('faceid-banner').innerHTML = '<strong>✅ Face ID подключён!</strong>';
+        } else {
+          alert('Не удалось подключить Face ID');
+        }
+      } catch (e) {
+        alert('Подключение отменено или не поддерживается устройством');
+      }
+    });
+    </script>
+    {% endif %}
+
     {% block content %}{% endblock %}
   </div>
+
+  {% if current_user and not current_user.is_admin %}
+  <div class="bottom-nav">
+    <div class="bn-items">
+      <a href="{{ url_for('catalog') }}" class="{{ 'active' if request.endpoint == 'catalog' }}">
+        <span class="bn-icon">🛒</span>Каталог
+      </a>
+      <a href="{{ url_for('order_history') }}" class="{{ 'active' if request.endpoint == 'order_history' }}">
+        <span class="bn-icon">📋</span>Заказы
+      </a>
+      <a href="{{ url_for('logout') }}">
+        <span class="bn-icon">👤</span>Выход
+      </a>
+    </div>
+  </div>
+  {% endif %}
 </body>
+<script>
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register("{{ url_for('static', filename='sw.js') }}").catch(() => {});
+  });
+}
+</script>
 </html>

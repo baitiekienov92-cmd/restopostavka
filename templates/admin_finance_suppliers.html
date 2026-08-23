@@ -1,0 +1,34 @@
+{% extends "base.html" %}
+{% block title %}Финансы: поставщики{% endblock %}
+{% block content %}
+
+<div class="page-head">
+  <h1>Финансы — поставщики</h1>
+  <div class="sub">Дебет — сколько закупили, кредит — сколько оплатили, баланс — наш долг поставщику</div>
+</div>
+
+<div class="filter-bar">
+  <a href="{{ url_for('admin_finance_restaurants') }}" class="btn small secondary">Рестораны</a>
+  <span class="btn small">Поставщики</span>
+</div>
+
+<div class="card">
+  <table>
+    <thead><tr><th>Поставщик</th><th>Дебет (закуп)</th><th>Кредит (оплаты)</th><th>Баланс</th><th></th></tr></thead>
+    <tbody>
+      {% for s in suppliers %}
+      <tr>
+        <td>{{ s.name }}</td>
+        <td class="mono">{{ '%.0f'|format(s.total_debit) }} ₸</td>
+        <td class="mono">{{ '%.0f'|format(s.total_credit) }} ₸</td>
+        <td class="mono" style="font-weight:700; color: {{ 'var(--danger)' if s.balance > 0 else 'var(--forest)' }};">
+          {{ '%.0f'|format(s.balance) }} ₸
+        </td>
+        <td><a href="{{ url_for('admin_finance_supplier_detail', supplier_id=s.id) }}" class="btn small secondary">Открыть →</a></td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+{% endblock %}
