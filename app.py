@@ -1,6 +1,7 @@
 import os
 import base64
 import json
+import re
 import requests
 from datetime import date, datetime, timedelta
 from functools import wraps
@@ -918,6 +919,106 @@ def admin_payment_notice_reject(notice_id):
     db.session.commit()
     flash("Заявка на оплату отклонена", "success")
     return redirect(url_for("admin_notifications"))
+
+
+# ---------- Сборка заказа (фасовка) + распознавание веса с весов по фото ----------
+
+@app.route("/admin/orders/<int:order_id>/pack")
+@admin_required
+def admin_order_pack(order_id):
+    order = Order.query.get_or_404(order_id)
+    return render_template("admin_order_pack.html", order=order)
+
+
+@app.route("/admin/orders/<int:order_id>/pack/save", methods=["POST"])
+@admin_required
+def admin_order_pack_save(order_id):
+    order = Order.query.get_or_404(order_id)
+    item_ids = request.form.getlist("item_id")
+    qtys = request.form.getlist("packed_qty")
+    for iid, q in zip(item_ids, qtys):
+        item = OrderItem.query.get(int(iid))
+        if item and item.order_id == order.id and q:
+            try:
+                item.packed_qty = float(q)
+            except ValueError:
+                pass
+    if order.status in ("new", "confirmed"):
+        order.status = "packing"
+    db.session.commit()
+    flash(f"Фасовка заказа №{order.id} сохранена", "success")
+    return redirect(url_for("admin_orders"))
+
+
+def read_scale_weight_from_photo(image_bytes, media_type):
+    """Отправляет фото весов в Claude Vision и возвращает распознанный текст (число или НЕ_РАСПОЗНАНО)."""
+    b64_image = base64.b64encode(image_bytes).decode()
+    resp = requests.post(
+        "https://api.anthropic.com/v1/messages",
+        headers={
+            "x-api-key": ANTHROPIC_API_KEY,
+            "anthropic-version": "2023-06-01",
+            "content-type": "application/json",
+        },
+        json={
+            "model": ANTHROPIC_MODEL,
+            "max_tokens": 50,
+            "messages": [{
+                "role": "user",
+                "content": [
+                    {"type": "image", "source": {"type": "base64", "media_type": media_type, "data": b64_image}},
+                    {
+                        "type": "text",
+                        "text": (
+                            "На фото — экран электронных весов с цифровым дисплеем. "
+                            "Определи вес в килограммах. Ответь ТОЛЬКО числом в кг (например: 2.35), "
+                            "без единиц измерения и лишнего текста. "
+                            "Если не можешь разобрать цифры на дисплее — ответь ровно: НЕ_РАСПОЗНАНО"
+                        ),
+                    },
+                ],
+            }],
+        },
+        timeout=30,
+    )
+    resp.raise_for_status()
+    result = resp.json()
+    return "".join(
+        block.get("text", "") for block in result.get("content", []) if block.get("type") == "text"
+    ).strip()
+
+
+@app.route("/admin/scale/read", methods=["POST"])
+@admin_required
+def admin_scale_read():
+    if not ANTHROPIC_API_KEY:
+        return jsonify({"error": "AI не настроен: не задан ANTHROPIC_API_KEY на сервере"}), 400
+
+    file = request.files.get("photo")
+    if not file or not file.filename:
+        return jsonify({"error": "Фото не получено"}), 400
+
+    media_type = file.mimetype or "image/jpeg"
+    image_bytes = file.read()
+
+    try:
+        raw_text = read_scale_weight_from_photo(image_bytes, media_type)
+    except requests.exceptions.RequestException as e:
+        return jsonify({"error": f"Ошибка обращения к AI: {e}"}), 500
+
+    if "НЕ_РАСПОЗНАНО" in raw_text.upper() or not raw_text:
+        return jsonify({"error": "Не удалось распознать вес на фото, введи вручную"}), 200
+
+    match = re.search(r"\d+[.,]?\d*", raw_text)
+    if not match:
+        return jsonify({"error": "Не удалось распознать вес на фото, введи вручную"}), 200
+
+    try:
+        weight = float(match.group(0).replace(",", "."))
+    except ValueError:
+        return jsonify({"error": "Не удалось распознать вес на фото, введи вручную"}), 200
+
+    return jsonify({"weight": weight})
 
 
 # ---------- AI-ассистент ----------
