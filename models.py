@@ -172,12 +172,20 @@ class OrderItem(db.Model):
     product_id = db.Column(db.Integer, db.ForeignKey("products.id"), nullable=False)
     qty = db.Column(db.Float, nullable=False)
     price = db.Column(db.Float, nullable=False)  # цена на момент заказа
+    packed_qty = db.Column(db.Float, nullable=True)  # фактический вес при фасовке (со сканера весов)
 
     product = db.relationship("Product")
 
     @property
     def subtotal(self):
         return self.qty * self.price
+
+    @property
+    def weight_diff(self):
+        """Разница между заказанным и фактически расфасованным весом."""
+        if self.packed_qty is None:
+            return None
+        return round(self.packed_qty - self.qty, 2)
 
 
 # ---------- Закуп у поставщиков ----------
