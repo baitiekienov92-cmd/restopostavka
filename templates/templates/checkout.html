@@ -1,0 +1,41 @@
+{% extends "base.html" %}
+{% block title %}Оформление заказа{% endblock %}
+{% block content %}
+
+<div class="page-head">
+  <h1>Оформление заказа</h1>
+  <div class="sub">Доставка на {{ delivery_date.strftime('%d.%m.%Y') }}</div>
+</div>
+
+<div class="card">
+  <table>
+    <thead>
+      <tr><th>Товар</th><th>Кол-во</th><th>Цена</th><th>Сумма</th></tr>
+    </thead>
+    <tbody>
+      {% for item in items %}
+      <tr>
+        <td>{{ item.product.name }}</td>
+        <td class="mono">{{ item.qty }} {{ item.product.unit }}</td>
+        <td class="mono">{{ '%.0f'|format(item.price) }} ₸</td>
+        <td class="mono">{{ '%.0f'|format(item.subtotal) }} ₸</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  <div class="summary-row" style="margin-top:12px; font-weight:700; font-size:16px;">
+    <span>Итого</span>
+    <span class="mono">{{ '%.0f'|format(total) }} ₸</span>
+  </div>
+</div>
+
+<form method="post" style="margin-top:18px;">
+  <div class="field">
+    <label>Комментарий к заказу (необязательно)</label>
+    <input type="text" name="comment" placeholder="Например: привезти до 10:00">
+  </div>
+  <button class="btn" type="submit">Подтвердить заказ</button>
+  <a href="{{ url_for('catalog') }}" class="btn secondary">Назад в каталог</a>
+</form>
+
+{% endblock %}

@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Регистрация — restopostavka</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+  <link rel="manifest" href="{{ url_for('static', filename='manifest.json') }}">
+  <meta name="theme-color" content="#075E54">
+</head>
+<body>
+  <div class="login-wrap">
+    <div class="login-card" style="width:380px;">
+      <h1>restopostavka</h1>
+      <div class="tag">Регистрация ресторана</div>
+
+      {% with messages = get_flashed_messages(with_categories=true) %}
+        {% if messages %}
+          {% for category, message in messages %}
+            <div class="flash {{ category }}">{{ message }}</div>
+          {% endfor %}
+        {% endif %}
+      {% endwith %}
+
+      <form method="post">
+        <div class="field">
+          <label>Название ресторана</label>
+          <input type="text" name="restaurant_name" placeholder="Например: Кафе Достар" required>
+        </div>
+        <div class="field">
+          <label>Адрес</label>
+          <input type="text" name="address" placeholder="Алматы, ул. ...">
+        </div>
+        <div class="field">
+          <label>Ваше имя</label>
+          <input type="text" name="contact_name" placeholder="Кто будет заказывать" required>
+        </div>
+        <div class="field">
+          <label>Телефон (логин)</label>
+          <input type="text" name="phone" placeholder="+7 700 000 00 00" required>
+        </div>
+        <div class="field">
+          <label>Пароль</label>
+          <input type="password" name="password" required>
+        </div>
+        <button class="btn" type="submit" style="width:100%">Отправить заявку</button>
+      </form>
+
+      <div class="divider-or">или</div>
+      <a href="{{ url_for('login') }}" class="btn secondary" style="width:100%; text-align:center; display:block; box-sizing:border-box;">Уже есть аккаунт — войти</a>
+
+      <p style="font-size:12px; color:var(--ink-soft); text-align:center; margin-top:14px;">
+        Заявка отправится админу на проверку. Как только одобрит — сможешь войти и оформлять заказы.
+      </p>
+    </div>
+  </div>
+</body>
+</html>

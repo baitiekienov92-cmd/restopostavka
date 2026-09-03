@@ -1,0 +1,101 @@
+{% extends "base.html" %}
+{% block title %}Каталог — restopostavka{% endblock %}
+{% block content %}
+
+<div class="page-head">
+  <h1>Каталог товаров</h1>
+  <div class="sub">Доставка на {{ delivery_date.strftime('%d.%m.%Y') }} · заказ до 18:00 накануне</div>
+</div>
+
+{% set ns = namespace(last_cat=None) %}
+{% for product in products %}
+  {% if product.category and product.category.name != ns.last_cat %}
+    <div class="category-label">{{ product.category.name }}</div>
+    {% set ns.last_cat = product.category.name %}
+  {% elif not product.category and ns.last_cat != 'Без категории' %}
+    <div class="category-label">Без категории</div>
+    {% set ns.last_cat = 'Без категории' %}
+  {% endif %}
+{% endfor %}
+
+<div class="product-grid">
+{% for product in products %}
+  <div class="product-card" data-product-id="{{ product.id }}">
+    <div class="name">{{ product.name }}</div>
+    <div class="price">{{ '%.0f'|format(prices[product.id]) }} ₸ <span class="unit">/ {{ product.unit }}</span></div>
+    <div class="qty-row">
+      <input type="number" min="0" step="0.5" inputmode="decimal" pattern="[0-9]*" class="qty-input" value="{{ cart.get(product.id|string, '') }}" placeholder="0">
+      <button type="button" class="add-btn">В заказ</button>
+    </div>
+  </div>
+{% endfor %}
+</div>
+
+{% if cart %}
+<a href="{{ url_for('checkout') }}" class="cart-fab">Корзина ({{ cart|length }}) →</a>
+{% endif %}
+
+<script>
+function sanitizeQty(input) {
+  // Разрешаем только цифры и одну точку/запятую — блокируем буквы и спецсимволы
+  let v = input.value.replace(',', '.').replace(/[^0-9.]/g, '');
+  const parts = v.split('.');
+  if (parts.length > 2) v = parts[0] + '.' + parts.slice(1).join('');
+  input.value = v;
+}
+
+function updateHighlight(card, input) {
+  const qty = parseFloat(input.value) || 0;
+  card.classList.toggle('selected', qty > 0);
+}
+
+document.querySelectorAll('.product-card').forEach(card => {
+  const id = card.dataset.productId;
+  const input = card.querySelector('.qty-input');
+  const btn = card.querySelector('.add-btn');
+
+  updateHighlight(card, input);
+
+  input.addEventListener('input', () => {
+    sanitizeQty(input);
+    updateHighlight(card, input);
+  });
+  input.addEventListener('keypress', (e) => {
+    // Блокируем ввод букв и любых символов кроме цифр, точки, запятой
+    if (!/[0-9.,]/.test(e.key)) e.preventDefault();
+  });
+  input.addEventListener('paste', (e) => {
+    e.preventDefault();
+    const text = (e.clipboardData || window.clipboardData).getData('text');
+    input.value = text.replace(',', '.').replace(/[^0-9.]/g, '');
+    updateHighlight(card, input);
+  });
+
+  btn.addEventListener('click', () => {
+    const qty = input.value || 0;
+    fetch("{{ url_for('cart_update') }}", {
+      method: "POST",
+      headers: {"Content-Type": "application/x-www-form-urlencoded", "X-Requested-With": "XMLHttpRequest"},
+      body: `product_id=${id}&qty=${qty}`
+    }).then(r => r.json()).then(data => {
+      btn.textContent = "Добавлено ✓";
+      updateHighlight(card, input);
+      setTimeout(() => btn.textContent = "В заказ", 900);
+      let fab = document.querySelector('.cart-fab');
+      if (data.cart_count > 0) {
+        if (!fab) {
+          fab = document.createElement('a');
+          fab.className = 'cart-fab';
+          fab.href = "{{ url_for('checkout') }}";
+          document.body.appendChild(fab);
+        }
+        fab.textContent = `Корзина (${data.cart_count}) →`;
+      } else if (fab) {
+        fab.remove();
+      }
+    });
+  });
+});
+</script>
+
+{% endblock %}

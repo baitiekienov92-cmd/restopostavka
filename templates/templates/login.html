@@ -1,0 +1,133 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Вход — restopostavka</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+  <link rel="manifest" href="{{ url_for('static', filename='manifest.json') }}">
+  <meta name="theme-color" content="#075E54">
+</head>
+<body>
+  <div class="login-wrap">
+    <div class="login-card">
+      <h1>restopostavka</h1>
+      <div class="tag">Закуп овощей и продуктов для ресторанов</div>
+
+      {% with messages = get_flashed_messages(with_categories=true) %}
+        {% if messages %}
+          {% for category, message in messages %}
+            <div class="flash {{ category }}">{{ message }}</div>
+          {% endfor %}
+        {% endif %}
+      {% endwith %}
+      <div id="faceid-error" class="flash error" style="display:none;"></div>
+
+      <form method="post" id="login-form">
+        <div class="field">
+          <label>Телефон</label>
+          <input type="text" name="phone" id="phone-input" placeholder="+7 700 000 00 00" required autofocus>
+        </div>
+        <div class="field">
+          <label>Пароль</label>
+          <input type="password" name="password" required>
+        </div>
+        <button class="btn" type="submit" style="width:100%">Войти</button>
+      </form>
+
+      {% if webauthn_available %}
+      <div class="divider-or">или</div>
+      <button type="button" id="faceid-btn" class="biometric-btn">
+        <span>🔐</span> Войти по Face ID
+      </button>
+      {% endif %}
+
+      <div class="divider-or">или</div>
+      <a href="{{ url_for('register') }}" class="btn secondary" style="width:100%; text-align:center; display:block; box-sizing:border-box;">Зарегистрировать ресторан</a>
+    </div>
+  </div>
+
+{% if webauthn_available %}
+<script>
+function bufferDecode(value) {
+  value = value.replace(/-/g, '+').replace(/_/g, '/');
+  const pad = value.length % 4;
+  if (pad) value += '='.repeat(4 - pad);
+  const raw = atob(value);
+  const buf = new Uint8Array(raw.length);
+  for (let i = 0; i < raw.length; i++) buf[i] = raw.charCodeAt(i);
+  return buf.buffer;
+}
+function bufferEncode(buf) {
+  const bytes = new Uint8Array(buf);
+  let str = '';
+  for (let i = 0; i < bytes.length; i++) str += String.fromCharCode(bytes[i]);
+  return btoa(str).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
+
+document.getElementById('faceid-btn').addEventListener('click', async () => {
+  const errBox = document.getElementById('faceid-error');
+  errBox.style.display = 'none';
+  const phone = document.getElementById('phone-input').value.trim();
+  if (!phone) {
+    errBox.textContent = 'Сначала введи номер телефона, потом жми Face ID';
+    errBox.style.display = 'block';
+    return;
+  }
+  if (!window.PublicKeyCredential) {
+    errBox.textContent = 'Этот браузер не поддерживает Face ID / Touch ID';
+    errBox.style.display = 'block';
+    return;
+  }
+
+  try {
+    const beginResp = await fetch("{{ url_for('webauthn_login_begin') }}", {
+      method: "POST",
+      headers: {"Content-Type": "application/x-www-form-urlencoded"},
+      body: `phone=${encodeURIComponent(phone)}`
+    });
+    if (!beginResp.ok) {
+      errBox.textContent = 'Face ID не подключён для этого номера. Сначала войди паролем и подключи Face ID в приложении.';
+      errBox.style.display = 'block';
+      return;
+    }
+    const opts = await beginResp.json();
+    opts.challenge = bufferDecode(opts.challenge);
+    if (opts.allowCredentials) {
+      opts.allowCredentials = opts.allowCredentials.map(c => ({...c, id: bufferDecode(c.id)}));
+    }
+
+    const cred = await navigator.credentials.get({ publicKey: opts });
+    const payload = {
+      id: cred.id,
+      rawId: bufferEncode(cred.rawId),
+      type: cred.type,
+      response: {
+        authenticatorData: bufferEncode(cred.response.authenticatorData),
+        clientDataJSON: bufferEncode(cred.response.clientDataJSON),
+        signature: bufferEncode(cred.response.signature),
+        userHandle: cred.response.userHandle ? bufferEncode(cred.response.userHandle) : null
+      }
+    };
+
+    const completeResp = await fetch("{{ url_for('webauthn_login_complete') }}", {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify(payload)
+    });
+    const result = await completeResp.json();
+    if (result.ok) {
+      window.location.href = result.redirect;
+    } else {
+      errBox.textContent = 'Не удалось войти через Face ID. Попробуй паролем.';
+      errBox.style.display = 'block';
+    }
+  } catch (e) {
+    errBox.textContent = 'Вход отменён или не удался.';
+    errBox.style.display = 'block';
+  }
+});
+</script>
+{% endif %}
+</body>
+</html>

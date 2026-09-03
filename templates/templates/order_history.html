@@ -1,0 +1,73 @@
+{% extends "base.html" %}
+{% block title %}Мои заказы{% endblock %}
+{% block content %}
+
+<div class="page-head">
+  <h1>Мои заказы</h1>
+</div>
+
+<div class="card" style="margin-bottom:18px;">
+  <details>
+    <summary style="cursor:pointer; font-weight:600; color:var(--teal);">💰 Сообщить об оплате</summary>
+    <form method="post" action="{{ url_for('order_payment_notice') }}" style="display:flex; gap:10px; align-items:end; flex-wrap:wrap; margin-top:12px;">
+      <div class="field" style="margin:0;">
+        <label>Сумма, ₸</label>
+        <input type="number" step="0.01" name="amount" required style="width:140px;">
+      </div>
+      <div class="field" style="margin:0; flex:1; min-width:180px;">
+        <label>Комментарий</label>
+        <input type="text" name="note" placeholder="Полная оплата / частично за заказ №...">
+      </div>
+      <button class="btn" type="submit">Отправить</button>
+    </form>
+  </details>
+</div>
+
+{% if orders %}
+<div class="card">
+  <table>
+    <thead>
+      <tr><th>№</th><th>Дата доставки</th><th>Статус</th><th>Сумма</th><th>Приёмка</th><th></th></tr>
+    </thead>
+    <tbody>
+      {% for order in orders %}
+      <tr>
+        <td class="mono">#{{ order.id }}</td>
+        <td>{{ order.delivery_date.strftime('%d.%m.%Y') }}</td>
+        <td><span class="status-pill status-{{ order.status }}">{{ order.status_label }}</span></td>
+        <td class="mono">{{ '%.0f'|format(order.total) }} ₸</td>
+        <td>
+          {% if order.confirmation_state == 'dispute' %}
+            <span class="status-pill status-cancelled">Расхождение</span>
+          {% elif order.confirmation_state == 'confirmed' %}
+            <span class="status-pill status-delivered">Подтверждён ✓</span>
+          {% elif order.confirmation_state == 'awaiting_confirmation' %}
+            <form method="post" action="{{ url_for('order_confirm', order_id=order.id) }}" style="display:inline;">
+              <button class="btn small" type="submit">✓ Приёмка</button>
+            </form>
+            <button class="btn small secondary" type="button" onclick="document.getElementById('dispute-{{ order.id }}').style.display='flex'">⚠ Спор</button>
+            <form method="post" action="{{ url_for('order_dispute', order_id=order.id) }}" id="dispute-{{ order.id }}" enctype="multipart/form-data" style="display:none; flex-direction:column; gap:6px; margin-top:6px; align-items:flex-start;">
+              <input type="text" name="dispute_note" placeholder="Что не так: кол-во/качество/пересорт?" style="padding:6px; border:1px solid var(--line); border-radius:6px; font-size:12px; width:100%;">
+              <label style="font-size:11px; color:var(--ink-soft);">Фото несоответствия:</label>
+              <input type="file" name="dispute_photo" accept="image/*" capture="environment" style="font-size:11px;">
+              <button class="btn small" type="submit" style="background:var(--danger);">Отправить спор с фото</button>
+            </form>
+          {% else %}
+            <span style="color:var(--ink-soft); font-size:12px;">—</span>
+          {% endif %}
+        </td>
+        <td><a href="{{ url_for('order_repeat', order_id=order.id) }}" class="btn small secondary">Повторить</a></td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% else %}
+<div class="empty-state">
+  <h2>Заказов пока нет</h2>
+  <p>Оформите первый заказ в каталоге.</p>
+  <a href="{{ url_for('catalog') }}" class="btn">Перейти в каталог</a>
+</div>
+{% endif %}
+
+{% endblock %}

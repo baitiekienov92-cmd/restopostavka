@@ -1,0 +1,67 @@
+{% extends "base.html" %}
+{% block title %}Закуп у поставщиков{% endblock %}
+{% block content %}
+
+<div class="page-head">
+  <h1>Закуп у поставщиков</h1>
+  <div class="sub">На {{ date_filter }} · распредели, у кого что берём</div>
+</div>
+
+<form method="get" class="filter-bar">
+  <input type="date" name="date" value="{{ date_filter }}" onchange="this.form.submit()">
+</form>
+
+{% if runs %}
+<div class="card" style="margin-bottom:18px;">
+  <h3 style="margin-top:0; font-size:14px; color:var(--ink-soft);">Сформированные заявки</h3>
+  <table>
+    <thead><tr><th>Поставщик</th><th>Позиций</th><th>Статус</th><th></th></tr></thead>
+    <tbody>
+      {% for run in runs %}
+      <tr>
+        <td>{{ run.supplier.name }}</td>
+        <td class="mono">{{ run.items|length }}</td>
+        <td><span class="status-pill status-{{ 'new' if run.status=='draft' else ('on_the_way' if run.status=='sent' else 'delivered') }}">{{ run.status_label }}</span></td>
+        <td><a href="{{ url_for('admin_run_detail', run_id=run.id) }}" class="btn small secondary">Открыть →</a></td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endif %}
+
+{% if rows %}
+<form method="post" action="{{ url_for('admin_procurement_assign') }}">
+  <input type="hidden" name="date_filter" value="{{ date_filter }}">
+  <div class="card">
+    <table>
+      <thead><tr><th>Товар</th><th>Нужно</th><th>Поставщик</th><th>Кол-во заказать</th></tr></thead>
+      <tbody>
+        {% for row in rows %}
+        <tr>
+          <td>{{ row.product.name }}</td>
+          <td class="mono">{{ row.qty|round(1) }} {{ row.product.unit }}</td>
+          <td>
+            <input type="hidden" name="product_id" value="{{ row.product.id }}">
+            <select name="supplier_id" style="padding:6px; border:1px solid var(--line); border-radius:6px;">
+              <option value="">— не выбрано —</option>
+              {% for s in suppliers %}
+              <option value="{{ s.id }}" {{ 'selected' if row.assigned and row.assigned.supplier.id == s.id }}>{{ s.name }}</option>
+              {% endfor %}
+            </select>
+          </td>
+          <td>
+            <input type="number" step="0.1" name="qty" value="{{ row.assigned.qty if row.assigned else row.qty }}" style="width:90px; padding:6px; border:1px solid var(--line); border-radius:6px;" class="mono">
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  <button class="btn" type="submit" style="margin-top:14px;">Сформировать заявки поставщикам</button>
+</form>
+{% else %}
+<div class="empty-state"><h2>На эту дату нет заказов от ресторанов</h2></div>
+{% endif %}
+
+{% endblock %}

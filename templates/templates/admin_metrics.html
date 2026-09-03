@@ -1,0 +1,87 @@
+{% extends "base.html" %}
+{% block title %}Метрики цен{% endblock %}
+{% block content %}
+
+<div class="page-head">
+  <h1>Метрики по товарам</h1>
+  <div class="sub">История цен: продажа ресторанам vs закуп у поставщиков</div>
+</div>
+
+<form method="get" class="filter-bar">
+  <select name="product_id" onchange="this.form.submit()" style="padding:8px 10px; border:1px solid var(--line); border-radius:8px; flex:1;">
+    <option value="">— выбери товар —</option>
+    {% for p in products %}
+    <option value="{{ p.id }}" {{ 'selected' if selected_product and selected_product.id == p.id }}>{{ p.name }}</option>
+    {% endfor %}
+  </select>
+</form>
+
+{% if selected_product %}
+
+{% set avg_sell = (restaurant_price_history|sum(attribute='price') / restaurant_price_history|length) if restaurant_price_history else 0 %}
+{% set avg_buy = (supplier_price_history|sum(attribute='price') / supplier_price_history|length) if supplier_price_history else 0 %}
+
+<div class="card" style="margin-bottom:18px; display:flex; gap:30px;">
+  <div>
+    <div style="font-size:12px; color:var(--ink-soft);">Средняя цена продажи</div>
+    <div class="mono" style="font-size:20px; font-weight:700;">{{ '%.0f'|format(avg_sell) }} ₸</div>
+  </div>
+  <div>
+    <div style="font-size:12px; color:var(--ink-soft);">Средняя цена закупа</div>
+    <div class="mono" style="font-size:20px; font-weight:700;">{{ '%.0f'|format(avg_buy) }} ₸</div>
+  </div>
+  <div>
+    <div style="font-size:12px; color:var(--ink-soft);">Средняя маржа</div>
+    <div class="mono" style="font-size:20px; font-weight:700; color: {{ 'var(--forest)' if (avg_sell - avg_buy) >= 0 else 'var(--danger)' }};">
+      {{ '%.0f'|format(avg_sell - avg_buy) }} ₸
+    </div>
+  </div>
+</div>
+
+<div class="card" style="margin-bottom:18px;">
+  <h3 style="margin-top:0;">Цена продажи ресторанам — история</h3>
+  {% if restaurant_price_history %}
+  <table>
+    <thead><tr><th>Дата</th><th>Ресторан</th><th>Кол-во</th><th>Цена</th></tr></thead>
+    <tbody>
+      {% for row in restaurant_price_history %}
+      <tr>
+        <td>{{ row.date.strftime('%d.%m.%Y') }}</td>
+        <td>{{ row.restaurant }}</td>
+        <td class="mono">{{ row.qty|round(1) }}</td>
+        <td class="mono">{{ '%.0f'|format(row.price) }} ₸</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p style="color:var(--ink-soft);">Продаж этого товара ещё не было.</p>
+  {% endif %}
+</div>
+
+<div class="card">
+  <h3 style="margin-top:0;">Цена закупа у поставщиков — история</h3>
+  {% if supplier_price_history %}
+  <table>
+    <thead><tr><th>Дата</th><th>Поставщик</th><th>Кол-во</th><th>Цена</th></tr></thead>
+    <tbody>
+      {% for row in supplier_price_history %}
+      <tr>
+        <td>{{ row.date.strftime('%d.%m.%Y') }}</td>
+        <td>{{ row.supplier }}</td>
+        <td class="mono">{{ row.qty|round(1) }}</td>
+        <td class="mono">{{ '%.0f'|format(row.price) }} ₸</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p style="color:var(--ink-soft);">Закупа этого товара с зафиксированной ценой ещё не было.</p>
+  {% endif %}
+</div>
+
+{% else %}
+<div class="empty-state"><h2>Выбери товар выше, чтобы увидеть историю цен</h2></div>
+{% endif %}
+
+{% endblock %}

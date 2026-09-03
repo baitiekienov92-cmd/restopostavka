@@ -1,0 +1,47 @@
+{% extends "base.html" %}
+{% block title %}Уведомления{% endblock %}
+{% block content %}
+
+<div class="page-head">
+  <h1>Уведомления</h1>
+  <div class="sub">Споры, приёмки от ресторанов и заявки на оплату</div>
+</div>
+
+{% if payment_notices %}
+<div class="card" style="margin-bottom:18px;">
+  <h3 style="margin-top:0;">💰 Заявки на оплату — ждут подтверждения</h3>
+  {% for notice in payment_notices %}
+  <div style="display:flex; justify-content:space-between; align-items:center; padding:10px 0; border-bottom:1px dashed var(--line);">
+    <div>
+      <strong>{{ notice.restaurant.name }}</strong> — <span class="mono">{{ '%.0f'|format(notice.amount) }} ₸</span>
+      {% if notice.note %}<div style="font-size:12px; color:var(--ink-soft);">{{ notice.note }}</div>{% endif %}
+      <div style="font-size:11px; color:var(--ink-soft);">{{ notice.created_at.strftime('%d.%m.%Y %H:%M') }}</div>
+    </div>
+    <div style="display:flex; gap:6px;">
+      <form method="post" action="{{ url_for('admin_payment_notice_accept', notice_id=notice.id) }}">
+        <button class="btn small" type="submit">Принять</button>
+      </form>
+      <form method="post" action="{{ url_for('admin_payment_notice_reject', notice_id=notice.id) }}">
+        <button class="btn small secondary" type="submit">Отклонить</button>
+      </form>
+    </div>
+  </div>
+  {% endfor %}
+</div>
+{% endif %}
+
+<div class="card">
+  <h3 style="margin-top:0;">История уведомлений</h3>
+  {% if notifications %}
+  {% for n in notifications %}
+  <div style="padding:10px 0; border-bottom:1px dashed var(--line);">
+    <div>{{ n.message }}</div>
+    <div style="font-size:11px; color:var(--ink-soft);">{{ n.created_at.strftime('%d.%m.%Y %H:%M') }}</div>
+  </div>
+  {% endfor %}
+  {% else %}
+  <p style="color:var(--ink-soft);">Уведомлений пока нет.</p>
+  {% endif %}
+</div>
+
+{% endblock %}
