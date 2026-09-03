@@ -1,5 +1,7 @@
 import os
 import base64
+import json
+import requests
 from datetime import date, datetime, timedelta
 from functools import wraps
 from urllib.parse import quote
@@ -40,6 +42,9 @@ app.config["UPLOAD_FOLDER"] = os.path.join(BASE_DIR, "static", "uploads", "invoi
 os.makedirs(app.config["UPLOAD_FOLDER"], exist_ok=True)
 app.config["DISPUTE_UPLOAD_FOLDER"] = os.path.join(BASE_DIR, "static", "uploads", "disputes")
 os.makedirs(app.config["DISPUTE_UPLOAD_FOLDER"], exist_ok=True)
+
+ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
+ANTHROPIC_MODEL = "claude-sonnet-5"
 
 db.init_app(app)
 
@@ -115,6 +120,9 @@ def login():
         password = request.form.get("password", "")
         user = User.query.filter_by(phone=phone).first()
         if user and user.check_password(password):
+            if not user.is_admin and user.restaurant and not user.restaurant.is_active:
+                flash("Ваша заявка на регистрацию ещё не одобрена админом. Ожидайте подтверждения.", "error")
+                return render_template("login.html")
             session["user_id"] = user.id
             flash(f"Добро пожаловать, {user.name}!", "success")
             if user.is_admin:
@@ -122,6 +130,43 @@ def login():
             return redirect(url_for("catalog"))
         flash("Неверный телефон или пароль", "error")
     return render_template("login.html")
+
+
+@app.route("/register", methods=["GET", "POST"])
+def register():
+    if request.method == "POST":
+        restaurant_name = request.form.get("restaurant_name", "").strip()
+        address = request.form.get("address", "").strip()
+        contact_name = request.form.get("contact_name", "").strip()
+        phone = request.form.get("phone", "").strip()
+        password = request.form.get("password", "")
+
+        if not all([restaurant_name, contact_name, phone, password]):
+            flash("Заполни все обязательные поля", "error")
+            return render_template("register.html")
+
+        if User.query.filter_by(phone=phone).first():
+            flash("Пользователь с таким телефоном уже зарегистрирован", "error")
+            return render_template("register.html")
+
+        restaurant = Restaurant(name=restaurant_name, address=address, phone=phone, is_active=False)
+        db.session.add(restaurant)
+        db.session.flush()
+
+        user = User(name=contact_name, phone=phone, role="restaurant", restaurant_id=restaurant.id)
+        user.set_password(password)
+        db.session.add(user)
+        db.session.commit()
+
+        notify_admin(
+            "registration",
+            f"🆕 Новая заявка на регистрацию: ресторан «{restaurant_name}» ({contact_name}, {phone}). "
+            f"Одобри в разделе «Рестораны»."
+        )
+        flash("Заявка отправлена! Как только админ одобрит — сможешь войти.", "success")
+        return redirect(url_for("login"))
+
+    return render_template("register.html")
 
 
 @app.route("/logout")
@@ -528,8 +573,18 @@ def admin_product_update(product_id):
 @app.route("/admin/restaurants")
 @admin_required
 def admin_restaurants():
-    restaurants = Restaurant.query.order_by(Restaurant.name).all()
+    restaurants = Restaurant.query.order_by(Restaurant.is_active.asc(), Restaurant.name).all()
     return render_template("admin_restaurants.html", restaurants=restaurants)
+
+
+@app.route("/admin/restaurants/<int:restaurant_id>/approve", methods=["POST"])
+@admin_required
+def admin_restaurant_approve(restaurant_id):
+    restaurant = Restaurant.query.get_or_404(restaurant_id)
+    restaurant.is_active = True
+    db.session.commit()
+    flash(f"Ресторан «{restaurant.name}» одобрен, может входить", "success")
+    return redirect(url_for("admin_restaurants"))
 
 
 @app.route("/admin/restaurants/add", methods=["POST"])
@@ -863,6 +918,116 @@ def admin_payment_notice_reject(notice_id):
     db.session.commit()
     flash("Заявка на оплату отклонена", "success")
     return redirect(url_for("admin_notifications"))
+
+
+# ---------- AI-ассистент ----------
+
+def build_business_snapshot():
+    """Собирает компактный срез ключевых данных бизнеса для контекста ассистента."""
+    lines = []
+
+    restaurants = Restaurant.query.order_by(Restaurant.name).all()
+    if restaurants:
+        lines.append("=== Балансы ресторанов (кто нам должен) ===")
+        for r in restaurants[:40]:
+            lines.append(f"- {r.name}: заказано {r.total_debit:.0f}₸, оплачено {r.total_credit:.0f}₸, баланс {r.balance:.0f}₸")
+
+    suppliers = Supplier.query.order_by(Supplier.name).all()
+    if suppliers:
+        lines.append("\n=== Балансы поставщиков (кому мы должны) ===")
+        for s in suppliers[:40]:
+            lines.append(f"- {s.name}: закуп {s.total_debit:.0f}₸, оплачено {s.total_credit:.0f}₸, баланс {s.balance:.0f}₸")
+
+    recent_orders = Order.query.order_by(Order.created_at.desc()).limit(25).all()
+    if recent_orders:
+        lines.append("\n=== Последние заказы ресторанов ===")
+        for o in recent_orders:
+            lines.append(f"- №{o.id} {o.restaurant.name}, доставка {o.delivery_date.strftime('%d.%m.%Y')}, статус={o.status_label}, сумма={o.total:.0f}₸")
+
+    disputes = Order.query.filter_by(dispute_flag=True).order_by(Order.updated_at.desc()).limit(15).all()
+    if disputes:
+        lines.append("\n=== Открытые споры от ресторанов ===")
+        for o in disputes:
+            lines.append(f"- №{o.id} {o.restaurant.name}: {o.dispute_note or 'без комментария'}")
+
+    notices = PaymentNotice.query.filter_by(status="pending").order_by(PaymentNotice.created_at.desc()).limit(15).all()
+    if notices:
+        lines.append("\n=== Неподтверждённые заявки на оплату от ресторанов ===")
+        for n in notices:
+            lines.append(f"- {n.restaurant.name}: {n.amount:.0f}₸ ({n.note or 'без комментария'})")
+
+    runs = SupplierRun.query.order_by(SupplierRun.purchase_date.desc()).limit(20).all()
+    if runs:
+        lines.append("\n=== Последние закупочные рейсы у поставщиков ===")
+        for run in runs:
+            total = run.actual_total if run.status == "received" else run.planned_total
+            lines.append(f"- {run.supplier.name}, {run.purchase_date.strftime('%d.%m.%Y')}, статус={run.status_label}, сумма≈{total:.0f}₸")
+
+    products_count = Product.query.filter_by(is_active=True).count()
+    restaurants_count = len(restaurants)
+    lines.append(f"\n=== Прочее ===\nАктивных товаров в каталоге: {products_count}\nВсего ресторанов-клиентов: {restaurants_count}")
+
+    return "\n".join(lines)
+
+
+@app.route("/admin/assistant/chat", methods=["POST"])
+@admin_required
+def admin_assistant_chat():
+    if not ANTHROPIC_API_KEY:
+        return jsonify({"error": "Ассистент не настроен: не задан ANTHROPIC_API_KEY на сервере."}), 400
+
+    data = request.get_json(silent=True) or {}
+    user_message = (data.get("message") or "").strip()
+    history = data.get("history") or []  # [{role: 'user'|'assistant', content: str}, ...]
+
+    if not user_message:
+        return jsonify({"error": "Пустое сообщение"}), 400
+
+    snapshot = build_business_snapshot()
+    system_prompt = (
+        "Ты — AI-ассистент внутри админ-панели сервиса restopostavka (закуп овощей/продуктов "
+        "для ресторанов, Алматы, Казахстан). Помогаешь владельцу/закупщику: отвечаешь на вопросы "
+        "по текущим данным бизнеса (см. срез ниже), помогаешь составлять сообщения поставщикам "
+        "и ресторанам, объясняешь метрики и маржу, даёшь короткие практичные советы. "
+        "Отвечай по-русски, кратко и по делу, используй суммы в тенге (₸). "
+        "Если в срезе данных нет ответа — так и скажи, не выдумывай цифры.\n\n"
+        f"Текущий срез данных бизнеса:\n{snapshot}"
+    )
+
+    messages = []
+    for turn in history[-10:]:
+        role = turn.get("role")
+        content = turn.get("content")
+        if role in ("user", "assistant") and content:
+            messages.append({"role": role, "content": content})
+    messages.append({"role": "user", "content": user_message})
+
+    try:
+        resp = requests.post(
+            "https://api.anthropic.com/v1/messages",
+            headers={
+                "x-api-key": ANTHROPIC_API_KEY,
+                "anthropic-version": "2023-06-01",
+                "content-type": "application/json",
+            },
+            json={
+                "model": ANTHROPIC_MODEL,
+                "max_tokens": 1024,
+                "system": system_prompt,
+                "messages": messages,
+            },
+            timeout=30,
+        )
+        resp.raise_for_status()
+        result = resp.json()
+        reply_text = "".join(
+            block.get("text", "") for block in result.get("content", []) if block.get("type") == "text"
+        ).strip()
+        if not reply_text:
+            reply_text = "Не удалось получить ответ от ассистента."
+        return jsonify({"reply": reply_text})
+    except requests.exceptions.RequestException as e:
+        return jsonify({"error": f"Ошибка обращения к AI: {e}"}), 500
 
 
 if __name__ == "__main__":
