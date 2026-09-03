@@ -26,12 +26,20 @@
 </div>
 
 {% for r in restaurants %}
-<div class="card" style="margin-bottom:14px;">
+<div class="card" style="margin-bottom:14px; {{ 'border-color: var(--crate); background: #FFF8F0;' if not r.is_active }}">
   <div style="display:flex; justify-content:space-between; align-items:start;">
     <div>
-      <h3 style="margin:0 0 2px;">{{ r.name }}</h3>
+      <h3 style="margin:0 0 2px;">
+        {{ r.name }}
+        {% if not r.is_active %}<span class="status-pill status-new">Ждёт одобрения</span>{% endif %}
+      </h3>
       <div style="color:var(--ink-soft); font-size:13px;">{{ r.address or '—' }} · {{ r.phone or '—' }}</div>
     </div>
+    {% if not r.is_active %}
+    <form method="post" action="{{ url_for('admin_restaurant_approve', restaurant_id=r.id) }}">
+      <button class="btn small" type="submit">✓ Одобрить</button>
+    </form>
+    {% endif %}
   </div>
 
   <div style="margin-top:12px;">

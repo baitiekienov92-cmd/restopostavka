@@ -126,6 +126,75 @@
     </div>
   </div>
   {% endif %}
+
+  {% if current_user and current_user.is_admin %}
+  <div id="ai-widget">
+    <button id="ai-toggle-btn" type="button" aria-label="AI-ассистент">🤖</button>
+    <div id="ai-panel">
+      <div id="ai-panel-header">
+        <span>🤖 AI-ассистент</span>
+        <button type="button" id="ai-close-btn" aria-label="Закрыть">✕</button>
+      </div>
+      <div id="ai-messages">
+        <div class="ai-msg ai-msg-assistant">Привет! Спроси меня про заказы, балансы ресторанов/поставщиков, споры или попроси помочь составить сообщение.</div>
+      </div>
+      <form id="ai-form">
+        <input type="text" id="ai-input" placeholder="Например: сколько нам должен ресторан X?" autocomplete="off">
+        <button type="submit">→</button>
+      </form>
+    </div>
+  </div>
+  <script>
+  (function() {
+    const toggleBtn = document.getElementById('ai-toggle-btn');
+    const closeBtn = document.getElementById('ai-close-btn');
+    const panel = document.getElementById('ai-panel');
+    const messagesBox = document.getElementById('ai-messages');
+    const form = document.getElementById('ai-form');
+    const input = document.getElementById('ai-input');
+    let history = [];
+
+    toggleBtn.addEventListener('click', () => panel.classList.toggle('open'));
+    closeBtn.addEventListener('click', () => panel.classList.remove('open'));
+
+    function addMessage(role, text) {
+      const div = document.createElement('div');
+      div.className = 'ai-msg ai-msg-' + role;
+      div.textContent = text;
+      messagesBox.appendChild(div);
+      messagesBox.scrollTop = messagesBox.scrollHeight;
+      return div;
+    }
+
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const text = input.value.trim();
+      if (!text) return;
+      input.value = '';
+      addMessage('user', text);
+      const thinking = addMessage('assistant', '…');
+
+      try {
+        const resp = await fetch("{{ url_for('admin_assistant_chat') }}", {
+          method: "POST",
+          headers: {"Content-Type": "application/json"},
+          body: JSON.stringify({ message: text, history: history })
+        });
+        const data = await resp.json();
+        if (data.reply) {
+          thinking.textContent = data.reply;
+          history.push({role: "user", content: text});
+          history.push({role: "assistant", content: data.reply});
+        } else {
+          thinking.textContent = "⚠️ " + (data.error || "Ошибка ассистента");
+        }
+      } catch (err) {
+        thinking.textContent = "⚠️ Не удалось связаться с ассистентом";
+      }
+    });
+  })();
+  </script>
+  {% endif %}
 </body>
 <script>
 if ('serviceWorker' in navigator) {

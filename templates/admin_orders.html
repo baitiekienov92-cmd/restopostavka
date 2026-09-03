@@ -45,7 +45,10 @@
             <span style="color:var(--ink-soft); font-size:12px;">—</span>
           {% endif %}
         </td>
-        <td><a href="{{ url_for('admin_order_print', order_id=order.id) }}" target="_blank" class="btn small secondary">Накладная</a></td>
+        <td>
+          <a href="{{ url_for('admin_order_pack', order_id=order.id) }}" class="btn small secondary">⚖️ Собрать</a>
+          <a href="{{ url_for('admin_order_print', order_id=order.id) }}" target="_blank" class="btn small secondary">Накладная</a>
+        </td>
       </tr>
       {% endfor %}
     </tbody>

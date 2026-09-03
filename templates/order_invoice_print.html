@@ -28,7 +28,7 @@
 
   <table>
     <thead>
-      <tr><th>№</th><th>Товар</th><th>Кол-во</th><th>Ед.</th><th>Цена</th><th>Сумма</th></tr>
+      <tr><th>№</th><th>Товар</th><th>Заказано</th><th>Факт. вес</th><th>Ед.</th><th>Цена</th><th>Сумма</th></tr>
     </thead>
     <tbody>
       {% for item in order.items %}
@@ -36,13 +36,14 @@
         <td>{{ loop.index }}</td>
         <td>{{ item.product.name }}</td>
         <td>{{ item.qty }}</td>
+        <td>{{ item.packed_qty if item.packed_qty is not none else '—' }}</td>
         <td>{{ item.product.unit }}</td>
         <td>{{ '%.0f'|format(item.price) }}</td>
         <td>{{ '%.0f'|format(item.subtotal) }}</td>
       </tr>
       {% endfor %}
       <tr class="total-row">
-        <td colspan="5">Итого</td>
+        <td colspan="6">Итого</td>
         <td>{{ '%.0f'|format(order.total) }} ₸</td>
       </tr>
     </tbody>
