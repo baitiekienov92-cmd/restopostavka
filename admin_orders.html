@@ -1,0 +1,63 @@
+{% extends "base.html" %}
+{% block title %}Заказы — админ{% endblock %}
+{% block content %}
+
+<div class="page-head">
+  <h1>Заказы ресторанов</h1>
+  <div class="sub">Всего на дату: {{ orders|length }}</div>
+</div>
+
+<form method="get" class="filter-bar">
+  <input type="date" name="date" value="{{ date_filter }}" onchange="this.form.submit()">
+  <a href="{{ url_for('admin_summary', date=date_filter) }}" class="btn secondary small">Сводный лист закупа →</a>
+</form>
+
+{% if orders %}
+<div class="card">
+  <table>
+    <thead>
+      <tr><th>№</th><th>Ресторан</th><th>Позиций</th><th>Сумма</th><th>Статус</th><th>Подтверждение</th><th></th></tr>
+    </thead>
+    <tbody>
+      {% for order in orders %}
+      <tr>
+        <td class="mono">#{{ order.id }}</td>
+        <td>{{ order.restaurant.name }}</td>
+        <td class="mono">{{ order.items|length }}</td>
+        <td class="mono">{{ '%.0f'|format(order.total) }} ₸</td>
+        <td>
+          <form method="post" action="{{ url_for('admin_order_status', order_id=order.id) }}" style="display:inline">
+            <select name="status" onchange="this.form.submit()" class="status-pill status-{{ order.status }}" style="border:none; cursor:pointer;">
+              {% for s in statuses %}
+              <option value="{{ s }}" {{ 'selected' if s == order.status }}>{{ {'new':'Новый','confirmed':'Подтверждён','packing':'Собирается','on_the_way':'В пути','delivered':'Доставлен','cancelled':'Отменён'}[s] }}</option>
+              {% endfor %}
+            </select>
+          </form>
+        </td>
+        <td>
+          {% if order.confirmation_state == 'dispute' %}
+            <span class="status-pill status-cancelled">Расхождение</span>
+          {% elif order.confirmation_state == 'confirmed' %}
+            <span class="status-pill status-delivered">Подтверждён</span>
+          {% elif order.confirmation_state == 'awaiting_confirmation' %}
+            <span class="status-pill status-new">Ждём ресторан</span>
+          {% else %}
+            <span style="color:var(--ink-soft); font-size:12px;">—</span>
+          {% endif %}
+        </td>
+        <td>
+          <a href="{{ url_for('admin_order_pack', order_id=order.id) }}" class="btn small secondary">⚖️ Собрать</a>
+          <a href="{{ url_for('admin_order_print', order_id=order.id) }}" target="_blank" class="btn small secondary">Накладная</a>
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% else %}
+<div class="empty-state">
+  <h2>На эту дату заказов нет</h2>
+</div>
+{% endif %}
+
+{% endblock %}

@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <title>Накладная №{{ order.id }}</title>
+  <style>
+    body { font-family: Arial, sans-serif; padding: 30px; color: #111; }
+    h1 { font-size: 20px; margin-bottom: 4px; }
+    .meta { font-size: 13px; color: #444; margin-bottom: 20px; }
+    table { width: 100%; border-collapse: collapse; margin-top: 16px; }
+    th, td { border: 1px solid #999; padding: 8px 10px; text-align: left; font-size: 13px; }
+    th { background: #eee; }
+    .total-row td { font-weight: bold; }
+    .sign-row { display: flex; justify-content: space-between; margin-top: 60px; font-size: 13px; }
+    .sign-box { width: 45%; border-top: 1px solid #333; padding-top: 6px; }
+    @media print { .no-print { display: none; } }
+  </style>
+</head>
+<body>
+  <button class="no-print" onclick="window.print()" style="margin-bottom:16px; padding:8px 16px;">Печать</button>
+
+  <h1>Накладная №{{ order.id }}</h1>
+  <div class="meta">
+    Ресторан: <b>{{ order.restaurant.name }}</b><br>
+    Адрес: {{ order.restaurant.address or '—' }}<br>
+    Дата доставки: {{ order.delivery_date.strftime('%d.%m.%Y') }}
+  </div>
+
+  <table>
+    <thead>
+      <tr><th>№</th><th>Товар</th><th>Заказано</th><th>Факт. вес</th><th>Ед.</th><th>Цена</th><th>Сумма</th></tr>
+    </thead>
+    <tbody>
+      {% for item in order.items %}
+      <tr>
+        <td>{{ loop.index }}</td>
+        <td>{{ item.product.name }}</td>
+        <td>{{ item.qty }}</td>
+        <td>{{ item.packed_qty if item.packed_qty is not none else '—' }}</td>
+        <td>{{ item.product.unit }}</td>
+        <td>{{ '%.0f'|format(item.price) }}</td>
+        <td>{{ '%.0f'|format(item.subtotal) }}</td>
+      </tr>
+      {% endfor %}
+      <tr class="total-row">
+        <td colspan="6">Итого</td>
+        <td>{{ '%.0f'|format(order.total) }} ₸</td>
+      </tr>
+    </tbody>
+  </table>
+
+  {% if order.comment %}
+  <p><b>Комментарий:</b> {{ order.comment }}</p>
+  {% endif %}
+
+  <div class="sign-row">
+    <div class="sign-box">Сдал (водитель)</div>
+    <div class="sign-box">Принял (ресторан)</div>
+  </div>
+</body>
+</html>

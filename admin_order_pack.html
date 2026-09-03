@@ -1,0 +1,79 @@
+{% extends "base.html" %}
+{% block title %}Сборка заказа №{{ order.id }}{% endblock %}
+{% block content %}
+
+<div class="page-head">
+  <h1>Сборка заказа №{{ order.id }}</h1>
+  <div class="sub">{{ order.restaurant.name }} · доставка {{ order.delivery_date.strftime('%d.%m.%Y') }}</div>
+</div>
+
+<div class="card" style="margin-bottom:16px; font-size:13px; color:var(--ink-soft);">
+  📷 Сфотографируй экран весов для каждого товара — вес подставится автоматически. Можно поправить вручную, если распознало неточно.
+</div>
+
+<form method="post" action="{{ url_for('admin_order_pack_save', order_id=order.id) }}">
+  <div class="card">
+    <table>
+      <thead><tr><th>Товар</th><th>Заказано</th><th>Факт. вес</th><th>Фото весов</th></tr></thead>
+      <tbody>
+        {% for item in order.items %}
+        <tr data-item-id="{{ item.id }}">
+          <td>{{ item.product.name }}</td>
+          <td class="mono">{{ item.qty|round(2) }} {{ item.product.unit }}</td>
+          <td>
+            <input type="hidden" name="item_id" value="{{ item.id }}">
+            <input type="text" inputmode="decimal" name="packed_qty" class="packed-qty-input mono"
+                   value="{{ item.packed_qty if item.packed_qty is not none else item.qty }}"
+                   style="width:90px; padding:6px; border:1px solid var(--line); border-radius:6px;">
+          </td>
+          <td>
+            <label class="btn small secondary scale-photo-btn" style="cursor:pointer; display:inline-block;">
+              📷 Фото весов
+              <input type="file" accept="image/*" capture="environment" class="scale-photo-input" style="display:none;">
+            </label>
+            <span class="scale-status" style="font-size:11px; color:var(--ink-soft); margin-left:6px;"></span>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  <button class="btn" type="submit" style="margin-top:14px;">Сохранить фасовку</button>
+  <a href="{{ url_for('admin_orders') }}" class="btn secondary" style="margin-top:14px;">Назад</a>
+</form>
+
+<script>
+document.querySelectorAll('tr[data-item-id]').forEach(row => {
+  const fileInput = row.querySelector('.scale-photo-input');
+  const qtyInput = row.querySelector('.packed-qty-input');
+  const statusSpan = row.querySelector('.scale-status');
+
+  fileInput.addEventListener('change', async () => {
+    const file = fileInput.files[0];
+    if (!file) return;
+    statusSpan.textContent = 'Распознаю…';
+
+    const formData = new FormData();
+    formData.append('photo', file);
+
+    try {
+      const resp = await fetch("{{ url_for('admin_scale_read') }}", {
+        method: 'POST',
+        body: formData
+      });
+      const data = await resp.json();
+      if (data.weight !== undefined) {
+        qtyInput.value = data.weight;
+        qtyInput.style.borderColor = '#1E88E5';
+        statusSpan.textContent = '✓ Распознано: ' + data.weight;
+      } else {
+        statusSpan.textContent = '⚠ ' + (data.error || 'не распознано, введи вручную');
+      }
+    } catch (e) {
+      statusSpan.textContent = '⚠ Ошибка связи, введи вручную';
+    }
+  });
+});
+</script>
+
+{% endblock %}
